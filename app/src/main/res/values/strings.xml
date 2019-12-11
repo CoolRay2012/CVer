@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">CVer</string>
+    <string name="action_settings">Settings</string>
+    <string name="ins_chartcc">Ins</string>
+    <string name="miniAn">mA</string>
+    <string name="avg_chartcc">Avg(mA)</string>
+</resources>
