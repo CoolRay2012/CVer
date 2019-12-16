@@ -5,12 +5,30 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.graphics.Color;
+import android.net.Uri;
 import android.os.BatteryManager;
+import android.os.Build;
 import android.os.Bundle;
+import android.provider.Settings;
+import android.util.Log;
+import android.view.Menu;
+import android.view.MenuItem;
+import android.view.MotionEvent;
+import android.view.View;
+import android.widget.TextView;
+import android.widget.Toast;
 
-import com.github.mikephil.charting.components.Description;
+import androidx.annotation.IdRes;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.appcompat.widget.Toolbar;
+
+import com.github.mikephil.charting.charts.LineChart;
+import com.github.mikephil.charting.components.Legend;
 import com.github.mikephil.charting.components.XAxis;
 import com.github.mikephil.charting.components.YAxis;
+import com.github.mikephil.charting.data.Entry;
+import com.github.mikephil.charting.data.LineData;
+import com.github.mikephil.charting.data.LineDataSet;
 import com.github.mikephil.charting.interfaces.datasets.ILineDataSet;
 import com.github.mikephil.charting.listener.ChartTouchListener;
 import com.github.mikephil.charting.listener.OnChartGestureListener;
@@ -18,36 +36,170 @@ import com.github.mikephil.charting.utils.ColorTemplate;
 import com.google.android.material.floatingactionbutton.FloatingActionButton;
 import com.google.android.material.snackbar.Snackbar;
 
-import androidx.annotation.ColorRes;
-import androidx.annotation.IdRes;
-import androidx.appcompat.app.AppCompatActivity;
-import androidx.appcompat.widget.Toolbar;
-
-import android.util.Log;
-import android.view.MotionEvent;
-import android.view.View;
-import android.view.Menu;
-import android.view.MenuItem;
-import android.widget.TextView;
-
-import com.github.mikephil.charting.charts.LineChart;
-import com.github.mikephil.charting.components.Legend;
-import com.github.mikephil.charting.data.Entry;
-import com.github.mikephil.charting.data.LineData;
-import com.github.mikephil.charting.data.LineDataSet;
-
 import java.util.ArrayList;
+import java.util.Timer;
+import java.util.TimerTask;
 
 public class MainActivity extends AppCompatActivity {
 
-    private MyChart chartV;
-    private MyChart chartC;
-    private MyChart chartW;
-    private MyChart chartCc;
-
+    private static final int SYSTEM_ALERT_WINDOW_PERMISSION = 2084;
+    private ArrayList<MyChart> chartList;
     private TextView tVChartCcAvg;
-
     private boolean onRecord = false;
+    private Timer timer;
+    private boolean isFloating = false;
+
+    private void askPermission() {
+        Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:" + getPackageName()));
+        startActivityForResult(intent, SYSTEM_ALERT_WINDOW_PERMISSION);
+    }
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
+        Toolbar toolbar = findViewById(R.id.toolbar);
+        setSupportActionBar(toolbar);
+
+        MyChart chartV = new MyChartV(R.id.chart1, "Voltage(mV)");
+        MyChart chartC = new MyChartC(R.id.chart2, "Current(mA)");
+        MyChart chartW = new MyChartW(R.id.chart3, "Power(mW)", chartV, chartC);
+        MyChart chartCc = new MyChartCc(R.id.chart4, "Current@3.8v(mA)", chartW);
+        MyChart chartT = new MyChartT(R.id.chart5, "Temperature");
+
+        chartList = new ArrayList<MyChart>();
+        chartList.add(chartV);
+        chartList.add(chartC);
+        chartList.add(chartW);
+        chartList.add(chartCc);
+        chartList.add(chartT);
+
+        tVChartCcAvg = findViewById(R.id.tAvgChartCc);
+
+        toggleFloatingView();//
+
+        final FloatingActionButton fab = findViewById(R.id.fab);
+        fab.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                if (onRecord) {
+                    Snackbar.make(view, "Stop record", Snackbar.LENGTH_LONG)
+                            .setAction("Stop", null).show();
+                    onRecord = false;
+                    fab.setImageResource(android.R.drawable.ic_media_play);
+                    stopMonitor();
+                } else {
+                    Snackbar.make(view, "Start record", Snackbar.LENGTH_LONG)
+                            .setAction("Action", null).show();
+                    onRecord = true;
+                    fab.setImageResource(android.R.drawable.ic_media_pause);
+                    startMonitor();
+                }
+            }
+        });
+
+        startMonitor();
+    }
+
+    private void startMonitor() {
+        for (MyChart c : chartList) {
+            c.clearAllEntry();
+        }
+
+        onRecord = true;
+
+        timer = new Timer();
+        timer.scheduleAtFixedRate(new TimerTask() {
+            @Override
+            public void run() {
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        for (MyChart c : chartList) {
+                            c.addOneEntry();
+                        }
+
+                        // put send service data in runnable to make sure data updated latest
+                        if (isFloating) {
+                            //update floating view
+                            Intent i = new Intent(MainActivity.this, FloatingViewService.class);
+                            i.putExtra("avgCurrent", (int) (chartList.get(3).getData() >> 10));
+                            Log.d("Cver:", "send service data " + (int) (chartList.get(3).getData() >> 10));
+                            startService(i);
+                        }
+                    }
+                });
+            }
+        }, 0, 5000);
+    }
+
+    private void stopMonitor() {
+        timer.cancel();
+    }
+
+    private void toggleFloatingView() {
+        Intent i = new Intent(MainActivity.this, FloatingViewService.class);
+        if (!isFloating) {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(this)) {
+                i.putExtra("action", "show");
+                startService(i);
+                //finish(); //if calll finish() would cause receiver leakage fatal exception
+            } else {
+                askPermission();
+                Toast.makeText(this, "You need System Alert Window Permission to do this", Toast.LENGTH_SHORT).show();
+            }
+            isFloating = true;
+        } else {
+            i.putExtra("action", "hide");
+            startService(i);
+            isFloating = false;
+        }
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        // Handle action bar item clicks here. The action bar will
+        // automatically handle clicks on the Home/Up button, so long
+        // as you specify a parent activity in AndroidManifest.xml.
+        int id = item.getItemId();
+
+        //noinspection SimplifiableIfStatement
+        if (id == R.id.action_toggle_fw) {
+            toggleFloatingView();
+            return true;
+        }
+
+        return super.onOptionsItemSelected(item);
+    }
+
+    private class MyChartV extends MyChart {
+
+        //BatteryManager mBatteryManager;
+        BroadcastReceiver batteryReceiver;
+
+        private MyChartV(@IdRes int id, String s) {
+            super(id, s);
+            batteryReceiver = new BroadcastReceiver() {
+                //int scale = -1;
+                //int level = -1;
+                int voltage = -1;
+                int temp = -1;
+
+                @Override
+                public void onReceive(Context context, Intent intent) {
+                    //level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
+                    //scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1);
+                    temp = intent.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, -1);
+                    voltage = intent.getIntExtra(BatteryManager.EXTRA_VOLTAGE, -1);
+                    setData(voltage);
+                    //Log.d("BatteryManager", "level is "+level+"/"+scale+", temp is "+temp+", voltage is "+voltage);
+                }
+            };
+            IntentFilter filter = new IntentFilter(Intent.ACTION_BATTERY_CHANGED);
+            registerReceiver(batteryReceiver, filter);
+        }
+    }
 
     private class MyChart {
         private LineChart chart;
@@ -79,7 +231,7 @@ public class MainActivity extends AppCompatActivity {
             chart.getXAxis().setDrawGridLines(true);
             chart.getXAxis().setDrawAxisLine(true);
             // set an alternative background color
-            chart.setBackgroundColor(Color.argb(96,55,55,55));
+            chart.setBackgroundColor(Color.argb(64, 55, 55, 55));
             chart.setNoDataText("Waiting data observing...");
             chart.setMaxVisibleValueCount(10);
             chart.setVisibleXRangeMinimum(9);
@@ -126,15 +278,28 @@ public class MainActivity extends AppCompatActivity {
             chart.invalidate();
         }
 
+        public void addOneEntry() {
+            if (!isDataNull()) {
+                addData();
+                // let the chart know it's data has changed
+                chart.notifyDataSetChanged();
+                // move to the latest entry
+                chart.moveViewToX(chart.getData().getEntryCount());
+            }
+        }
+
+        public void clearAllEntry() {
+            clearData();
+            getChart().notifyDataSetChanged();
+        }
+
         public void addData(){
             ILineDataSet set = chart.getData().getDataSetByIndex(0);
-            // set.addEntry(...); // can be called as well
             if (set == null) {
                 set = createSet();
                 chart.getData().addDataSet(set);
             }
-            //chart.getData().addEntry(new Entry(set.getEntryCount(), (float) (Math.random() * 40) + 30f), 0);
-            chart.getData().addEntry(new Entry(set.getEntryCount(), getLatestData()), 0);
+            chart.getData().addEntry(new Entry(set.getEntryCount(), getLatestDataForChart()), 0);
             chart.getData().notifyDataChanged();
 
             freshWidget();
@@ -148,7 +313,7 @@ public class MainActivity extends AppCompatActivity {
         }
 
         public void updateData() {
-            //to be override
+            //to be overrided
         }
 
         public long getData() {
@@ -156,12 +321,13 @@ public class MainActivity extends AppCompatActivity {
             return data;
         }
 
-        public float getLatestData() {
+        public float getLatestDataForChart() {
             updateData();
             return (float)data;
         }
 
         public void setData(long l) {
+            //Log.d("CVer","setData() " + data);
             data = l;
         }
 
@@ -191,38 +357,6 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private class MyChartV extends MyChart{
-
-        //BatteryManager mBatteryManager;
-        BroadcastReceiver batteryReceiver;
-
-        private MyChartV (@IdRes int id, String s) {
-            super(id, s);
-            batteryReceiver = new BroadcastReceiver() {
-                //int scale = -1;
-                //int level = -1;
-                int voltage = -1;
-                int temp = -1;
-                @Override
-                public void onReceive(Context context, Intent intent) {
-                    //level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
-                    //scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1);
-                    temp = intent.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, -1);
-                    voltage = intent.getIntExtra(BatteryManager.EXTRA_VOLTAGE, -1);
-                    setData(voltage);
-                    //Log.d("BatteryManager", "level is "+level+"/"+scale+", temp is "+temp+", voltage is "+voltage);
-                }
-            };
-            IntentFilter filter = new IntentFilter(Intent.ACTION_BATTERY_CHANGED);
-            registerReceiver(batteryReceiver, filter);
-        }
-
-        @Override
-        public float getLatestData(){
-            return getData();
-        }
-    }
-
     private class MyChartC extends MyChart{
 
         BatteryManager mBatteryManager;
@@ -236,8 +370,9 @@ public class MainActivity extends AppCompatActivity {
         public void updateData() {
             setData(-(mBatteryManager.getLongProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW)));
         }
+
         @Override
-        public float getLatestData(){
+        public float getLatestDataForChart() {
             updateData();
             return (float)(getData()>>10);
         }
@@ -253,9 +388,14 @@ public class MainActivity extends AppCompatActivity {
         }
 
         @Override
-        public float getLatestData() {
+        public void updateData() {
             setData(cv.getData()*cc.getData());
-            return getData()>>20;
+        }
+
+        @Override
+        public float getLatestDataForChart() {
+            updateData();
+            return (float) (getData() >> 20);
         }
     }
 
@@ -267,12 +407,12 @@ public class MainActivity extends AppCompatActivity {
             getChart().setOnChartGestureListener(new OnChartGestureListener() {
                 @Override
                 public void onChartGestureStart(MotionEvent me, ChartTouchListener.ChartGesture lastPerformedGesture) {
-                    freshWidget();
+                    //freshWidget();
                 }
 
                 @Override
                 public void onChartGestureEnd(MotionEvent me, ChartTouchListener.ChartGesture lastPerformedGesture) {
-                    freshWidget();
+                    //freshWidget();
                 }
 
                 @Override
@@ -292,7 +432,7 @@ public class MainActivity extends AppCompatActivity {
 
                 @Override
                 public void onChartFling(MotionEvent me1, MotionEvent me2, float velocityX, float velocityY) {
-                    freshWidget();
+                    //freshWidget();
                 }
 
                 @Override
@@ -308,9 +448,14 @@ public class MainActivity extends AppCompatActivity {
         }
 
         @Override
-        public float getLatestData() {
+        public void updateData() {
             setData(cw.getData()/3800);
-            return getData()>>10;
+        }
+
+        @Override
+        public float getLatestDataForChart() {
+            updateData();
+            return (float) (getData() >> 10);
         }
 
         public int calAvg(){
@@ -335,122 +480,35 @@ public class MainActivity extends AppCompatActivity {
     }
 
     @Override
-    protected void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
-        setContentView(R.layout.activity_main);
-        Toolbar toolbar = findViewById(R.id.toolbar);
-        setSupportActionBar(toolbar);
-
-       final FloatingActionButton fab = findViewById(R.id.fab);
-        fab.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                if (onRecord) {
-                    Snackbar.make(view, "Stop record", Snackbar.LENGTH_LONG)
-                            .setAction("Stop", null).show();
-                    onRecord = false;
-                    fab.setImageResource(android.R.drawable.ic_media_play);
-                    //stopMonitor();
-                } else {
-                    Snackbar.make(view, "Start record", Snackbar.LENGTH_LONG)
-                            .setAction("Action", null).show();
-                    onRecord = true;
-                    fab.setImageResource(android.R.drawable.ic_media_pause);
-                    startMonitor();
-                }
-            }
-        });
-
-        chartV = new MyChartV(R.id.chart1,"Voltage(mV)");
-        chartC = new MyChartC(R.id.chart2,"Current(mA)");
-        chartW = new MyChartW(R.id.chart3,"Power(mW)",chartV,chartC);
-        chartCc = new MyChartCc(R.id.chart4,"Current@3.8v(mA)", chartW);
-
-        tVChartCcAvg = findViewById(R.id.tAvgChartCc);
-
-        //startMonitor();
-    }
-
-    private void addEntry(MyChart chart) {
-        if (!chart.isDataNull()) {
-            chart.addData();
-            // let the chart know it's data has changed
-            chart.getChart().notifyDataSetChanged();
-            // move to the latest entry
-            chart.getChart().moveViewToX(chart.getChart().getData().getEntryCount());
-        }
-    }
-
-    private void clearEntry(MyChart chart) {
-        chart.clearData();
-        chart.getChart().notifyDataSetChanged();
-    }
-
-    private Thread thread;
-
-    private void startMonitor() {
-
-        if (thread != null)
-            thread.interrupt();
-
-        clearEntry(chartV);
-        clearEntry(chartC);
-        clearEntry(chartW);
-        clearEntry(chartCc);
-
-        thread = new Thread(new Runnable() {
-            @Override
-            public void run() {
-                for (int i = 0; i < 720; i++) {
-                    if (!onRecord) break;
-                    // Don't generate garbage runnables inside the loop.
-                    runOnUiThread(new Runnable() {
-                        @Override
-                        public void run() {
-                            addEntry(chartV);
-                            addEntry(chartC);
-                            addEntry(chartW);
-                            addEntry(chartCc);
-                        }
-                    });
-                    try {
-                        Thread.sleep(5000);
-                    } catch (InterruptedException e) {
-                        e.printStackTrace();
-                    }
-                }
-            }
-        });
-
-        thread.start();
-    }
-
-//    private void stopMonitor() {
-//        if (thread != null) {
-//            Log.d("CVer", "stop thread");
-//            thread.interrupt();
-//        }
-//    }
-
-    @Override
     public boolean onCreateOptionsMenu(Menu menu) {
         // Inflate the menu; this adds items to the action bar if it is present.
         getMenuInflater().inflate(R.menu.menu_main, menu);
         return true;
     }
 
-    @Override
-    public boolean onOptionsItemSelected(MenuItem item) {
-        // Handle action bar item clicks here. The action bar will
-        // automatically handle clicks on the Home/Up button, so long
-        // as you specify a parent activity in AndroidManifest.xml.
-        int id = item.getItemId();
+    private class MyChartT extends MyChart {
+        BroadcastReceiver batteryReceiver;
 
-        //noinspection SimplifiableIfStatement
-        if (id == R.id.action_settings) {
-            return true;
+        private MyChartT(@IdRes int id, String s) {
+            super(id, s);
+            batteryReceiver = new BroadcastReceiver() {
+                //int scale = -1;
+                //int level = -1;
+                //int voltage = -1;
+                int temp = -1;
+
+                @Override
+                public void onReceive(Context context, Intent intent) {
+                    //level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
+                    //scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1);
+                    temp = intent.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, -1);
+                    //voltage = intent.getIntExtra(BatteryManager.EXTRA_VOLTAGE, -1);
+                    setData(temp);
+                    //Log.d("BatteryManager", "level is "+level+"/"+scale+", temp is "+temp+", voltage is "+voltage);
+                }
+            };
+            IntentFilter filter = new IntentFilter(Intent.ACTION_BATTERY_CHANGED);
+            registerReceiver(batteryReceiver, filter);
         }
-
-        return super.onOptionsItemSelected(item);
     }
 }

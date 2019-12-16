@@ -16,7 +16,7 @@
         <androidx.appcompat.widget.Toolbar
             android:id="@+id/toolbar"
             android:layout_width="match_parent"
-            android:layout_height="match_parent"
+            android:layout_height="wrap_content"
             android:background="?attr/colorAccent"
             android:elevation="6dp"
             android:alpha="0.6"
@@ -37,6 +37,6 @@
         android:tint="#FFFFFF"
         app:elevation="6dp"
         app:fabSize="auto"
-        app:srcCompat="@android:drawable/ic_media_play"/>
+        app:srcCompat="@android:drawable/ic_media_pause" />
 
 </androidx.coordinatorlayout.widget.CoordinatorLayout>
