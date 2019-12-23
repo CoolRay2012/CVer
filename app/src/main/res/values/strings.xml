@@ -1,7 +1,11 @@
 <resources>
-    <string name="app_name">CVer</string>
+    <string name="app_name">ThinkPower</string>
     <string name="action_toggle_fw">Toggle floating widget</string>
-    <string name="ins_chartcc">Ins</string>
+    <string name="ins_chartcc">Current-Instant</string>
     <string name="miniAn">mA</string>
-    <string name="avg_chartcc">Avg(mA)</string>
+    <string name="miniVol">mV</string>
+    <string name="avg_chartcc">Current-Average</string>
+    <string name="ins_voltage">Voltage</string>
+    <string name="ins_temp">Temperature</string>
+    <string name="C">C</string>
 </resources>

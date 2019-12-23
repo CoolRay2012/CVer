@@ -19,6 +19,8 @@ public class FloatingViewService extends Service implements View.OnClickListener
     //    private boolean showing = false;
     private WindowManager.LayoutParams params;
 
+    public static final String CHANNEL_ID = "ForegroundServiceChannel";
+
     public FloatingViewService() {
     }
 
@@ -76,6 +78,7 @@ public class FloatingViewService extends Service implements View.OnClickListener
 //                return false;
 //            }
 //        });
+
     }
 
     @Override
@@ -100,6 +103,7 @@ public class FloatingViewService extends Service implements View.OnClickListener
 
     @Override
     public void onDestroy() {
+        stopForeground(true);
         if (mFloatingView != null) mWindowManager.removeView(mFloatingView);
         super.onDestroy();
     }

@@ -10,7 +10,6 @@ import android.os.BatteryManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
-import android.util.Log;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.MotionEvent;
@@ -45,6 +44,10 @@ public class MainActivity extends AppCompatActivity {
     private static final int SYSTEM_ALERT_WINDOW_PERMISSION = 2084;
     private ArrayList<MyChart> chartList;
     private TextView tVChartCcAvg;
+    private TextView tVChartCcIns;
+    private TextView tVVoltage;
+    private TextView tVTemp;
+
     private boolean onRecord = false;
     private Timer timer;
     private boolean isFloating = false;
@@ -62,13 +65,13 @@ public class MainActivity extends AppCompatActivity {
         Toolbar toolbar = findViewById(R.id.toolbar);
         setSupportActionBar(toolbar);
 
-        MyChart chartV = new MyChartV(R.id.chart1, "Voltage(mV)");
-        MyChart chartC = new MyChartC(R.id.chart2, "Current(mA)");
-        MyChart chartW = new MyChartW(R.id.chart3, "Power(mW)", chartV, chartC);
-        MyChart chartCc = new MyChartCc(R.id.chart4, "Current@3.8v(mA)", chartW);
-        MyChart chartT = new MyChartT(R.id.chart5, "Temperature");
+        MyChart chartV = new MyChartV(R.id.chart3, "Voltage(mV)");
+        MyChart chartC = new MyChartC(R.id.chart4, "Current(mA)");
+        MyChart chartW = new MyChartW(R.id.chart5, "Power(mW)", chartV, chartC);
+        MyChart chartCc = new MyChartCc(R.id.chart1, "Current@3.8v(mA)", chartW);
+        MyChart chartT = new MyChartT(R.id.chart2, "Temperature");
 
-        chartList = new ArrayList<MyChart>();
+        chartList = new ArrayList<>();
         chartList.add(chartV);
         chartList.add(chartC);
         chartList.add(chartW);
@@ -76,6 +79,9 @@ public class MainActivity extends AppCompatActivity {
         chartList.add(chartT);
 
         tVChartCcAvg = findViewById(R.id.tAvgChartCc);
+        tVChartCcIns = findViewById(R.id.tInsChartCc);
+        tVVoltage = findViewById(R.id.tVoltage);
+        tVTemp = findViewById(R.id.tTemp);
 
         toggleFloatingView();//
 
@@ -113,20 +119,22 @@ public class MainActivity extends AppCompatActivity {
         timer.scheduleAtFixedRate(new TimerTask() {
             @Override
             public void run() {
+                for (MyChart c : chartList) {
+                    c.addOneEntry();
+                }
+                // put send service data in runnable to make sure data updated latest
+                if (isFloating) {
+                    //update floating view
+                    Intent i = new Intent(MainActivity.this, FloatingViewService.class);
+                    i.putExtra("avgCurrent", (int) (chartList.get(3).getData() >> 10));
+                    //Log.d("Cver:", "send service data " + (int) (chartList.get(3).getData() >> 10));
+                    startService(i);
+                }
                 runOnUiThread(new Runnable() {
                     @Override
                     public void run() {
                         for (MyChart c : chartList) {
-                            c.addOneEntry();
-                        }
-
-                        // put send service data in runnable to make sure data updated latest
-                        if (isFloating) {
-                            //update floating view
-                            Intent i = new Intent(MainActivity.this, FloatingViewService.class);
-                            i.putExtra("avgCurrent", (int) (chartList.get(3).getData() >> 10));
-                            Log.d("Cver:", "send service data " + (int) (chartList.get(3).getData() >> 10));
-                            startService(i);
+                            c.refreshChart();
                         }
                     }
                 });
@@ -173,32 +181,11 @@ public class MainActivity extends AppCompatActivity {
         return super.onOptionsItemSelected(item);
     }
 
-    private class MyChartV extends MyChart {
-
-        //BatteryManager mBatteryManager;
-        BroadcastReceiver batteryReceiver;
-
-        private MyChartV(@IdRes int id, String s) {
-            super(id, s);
-            batteryReceiver = new BroadcastReceiver() {
-                //int scale = -1;
-                //int level = -1;
-                int voltage = -1;
-                int temp = -1;
-
-                @Override
-                public void onReceive(Context context, Intent intent) {
-                    //level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
-                    //scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1);
-                    temp = intent.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, -1);
-                    voltage = intent.getIntExtra(BatteryManager.EXTRA_VOLTAGE, -1);
-                    setData(voltage);
-                    //Log.d("BatteryManager", "level is "+level+"/"+scale+", temp is "+temp+", voltage is "+voltage);
-                }
-            };
-            IntentFilter filter = new IntentFilter(Intent.ACTION_BATTERY_CHANGED);
-            registerReceiver(batteryReceiver, filter);
-        }
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+        // Inflate the menu; this adds items to the action bar if it is present.
+        getMenuInflater().inflate(R.menu.menu_main, menu);
+        return true;
     }
 
     private class MyChart {
@@ -231,7 +218,7 @@ public class MainActivity extends AppCompatActivity {
             chart.getXAxis().setDrawGridLines(true);
             chart.getXAxis().setDrawAxisLine(true);
             // set an alternative background color
-            chart.setBackgroundColor(Color.argb(64, 55, 55, 55));
+            chart.setBackgroundColor(Color.argb(196, 16, 16, 16));
             chart.setNoDataText("Waiting data observing...");
             chart.setMaxVisibleValueCount(10);
             chart.setVisibleXRangeMinimum(9);
@@ -278,34 +265,39 @@ public class MainActivity extends AppCompatActivity {
             chart.invalidate();
         }
 
-        public void addOneEntry() {
+        private void addOneEntry() {
             if (!isDataNull()) {
                 addData();
-                // let the chart know it's data has changed
-                chart.notifyDataSetChanged();
-                // move to the latest entry
-                chart.moveViewToX(chart.getData().getEntryCount());
             }
         }
 
-        public void clearAllEntry() {
+        private void clearAllEntry() {
             clearData();
             getChart().notifyDataSetChanged();
         }
 
-        public void addData(){
+        private void addData() {
             ILineDataSet set = chart.getData().getDataSetByIndex(0);
             if (set == null) {
                 set = createSet();
                 chart.getData().addDataSet(set);
             }
             chart.getData().addEntry(new Entry(set.getEntryCount(), getLatestDataForChart()), 0);
-            chart.getData().notifyDataChanged();
-
-            freshWidget();
         }
 
-        public void freshWidget(){}
+        private void refreshChart() {
+            if (!isDataNull()) {
+                chart.getData().notifyDataChanged();
+                // let the chart know it's data has changed
+                chart.notifyDataSetChanged();
+                // move to the latest entry
+                chart.moveViewToX(chart.getData().getEntryCount());
+                refreshWidget();
+            }
+        }
+
+        public void refreshWidget() {
+        }
 
         public void clearData() {
             chart.getData().clearValues();
@@ -338,7 +330,7 @@ public class MainActivity extends AppCompatActivity {
             set.setCircleColor(Color.RED);
             set.setLineWidth(2);
             set.setCircleRadius(1f);
-            set.setFillAlpha(125);
+            set.setFillAlpha(196);
             //set.setDrawFilled(true); // will impact performance
             set.setFillColor(ColorTemplate.rgb("ff0000"));
             set.setHighLightColor(Color.rgb(244, 17, 17));
@@ -352,8 +344,63 @@ public class MainActivity extends AppCompatActivity {
             return chart;
         }
 
-        public boolean isDataNull(){
+        private boolean isDataNull() {
             return null == chart.getData();
+        }
+    }
+
+    private class MyChartV extends MyChart {
+
+        //BatteryManager mBatteryManager;
+        BroadcastReceiver batteryReceiver;
+
+        private MyChartV(@IdRes int id, String s) {
+            super(id, s);
+            batteryReceiver = new BroadcastReceiver() {
+                //int scale = -1;
+                //int level = -1;
+                int voltage = -1;
+                int temp = -1;
+
+                @Override
+                public void onReceive(Context context, Intent intent) {
+                    //level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
+                    //scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1);
+                    temp = intent.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, -1);
+                    voltage = intent.getIntExtra(BatteryManager.EXTRA_VOLTAGE, -1);
+                    setData(voltage);
+                    //Log.d("BatteryManager", "level is "+level+"/"+scale+", temp is "+temp+", voltage is "+voltage);
+                }
+            };
+            IntentFilter filter = new IntentFilter(Intent.ACTION_BATTERY_CHANGED);
+            registerReceiver(batteryReceiver, filter);
+        }
+
+        @Override
+        public void refreshWidget() {
+            tVVoltage.setText(String.valueOf(getData()));
+        }
+    }
+
+    private class MyChartW extends MyChart {
+        private MyChart cv;
+        private MyChart cc;
+
+        private MyChartW(@IdRes int id, String s, MyChart cv, MyChart cc) {
+            super(id, s);
+            this.cv = cv;
+            this.cc = cc;
+        }
+
+        @Override
+        public void updateData() {
+            setData(cv.getData() * cc.getData());
+        }
+
+        @Override
+        public float getLatestDataForChart() {
+            updateData();
+            return (float) (getData() >> 20);
         }
     }
 
@@ -368,7 +415,7 @@ public class MainActivity extends AppCompatActivity {
 
         @Override
         public void updateData() {
-            setData(-(mBatteryManager.getLongProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW)));
+            setData(-mBatteryManager.getLongProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW));
         }
 
         @Override
@@ -376,26 +423,10 @@ public class MainActivity extends AppCompatActivity {
             updateData();
             return (float)(getData()>>10);
         }
-    }
-
-    private class MyChartW extends MyChart{
-        private MyChart cv;
-        private MyChart cc;
-        private MyChartW (@IdRes int id, String s, MyChart cv, MyChart cc) {
-            super(id, s);
-            this.cv = cv;
-            this.cc = cc;
-        }
 
         @Override
-        public void updateData() {
-            setData(cv.getData()*cc.getData());
-        }
-
-        @Override
-        public float getLatestDataForChart() {
-            updateData();
-            return (float) (getData() >> 20);
+        public void refreshWidget() {
+            tVChartCcIns.setText(String.valueOf(getData() >> 10));
         }
     }
 
@@ -437,12 +468,12 @@ public class MainActivity extends AppCompatActivity {
 
                 @Override
                 public void onChartScale(MotionEvent me, float scaleX, float scaleY) {
-                    freshWidget();
+                    refreshWidget();
                 }
 
                 @Override
                 public void onChartTranslate(MotionEvent me, float dX, float dY) {
-                    freshWidget();
+                    refreshWidget();
                 }
             });
         }
@@ -474,16 +505,10 @@ public class MainActivity extends AppCompatActivity {
         }
 
         @Override
-        public void freshWidget() {
+        public void refreshWidget() {
             tVChartCcAvg.setText(String.valueOf(calAvg()));
+            tVChartCcIns.setText(String.valueOf(getData() >> 10));
         }
-    }
-
-    @Override
-    public boolean onCreateOptionsMenu(Menu menu) {
-        // Inflate the menu; this adds items to the action bar if it is present.
-        getMenuInflater().inflate(R.menu.menu_main, menu);
-        return true;
     }
 
     private class MyChartT extends MyChart {
@@ -509,6 +534,11 @@ public class MainActivity extends AppCompatActivity {
             };
             IntentFilter filter = new IntentFilter(Intent.ACTION_BATTERY_CHANGED);
             registerReceiver(batteryReceiver, filter);
+        }
+
+        @Override
+        public void refreshWidget() {
+            tVTemp.setText(String.valueOf(getData() / 10));
         }
     }
 }
